@@ -1,0 +1,7 @@
+core*
+pynga/__pycache__/
+*.dat
+*.png
+config*
+data*
+tmp*
