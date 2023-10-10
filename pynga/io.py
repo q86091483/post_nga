@@ -328,7 +328,7 @@ def get_keys_dat(s):
     return float(ss)
 
 def data_names(cpath, add_data_init=None):
-    files = glob.glob(cpath + '/data_*E*')
+    files = glob.glob(cpath + '/ufs:data_*E*')
     fn = sorted(files, key=get_keys_dat)
     if add_data_init != None:
         fn.insert(0, cpath+"/"+add_data_init)

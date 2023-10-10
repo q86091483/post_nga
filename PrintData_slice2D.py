@@ -21,11 +21,18 @@ if __name__ == '__main__':
   #parser.add_argument("-case_path",  "--case_path",  type=str, required=True)
 
   # Inputs
-  case_folder   = "/scratch/b/bsavard/zisen347/cases"
-  case_name     = "103_RectTurb_NoForcing"
-  fields        = ["U", "RHO", "T", "P"]
-  idirs         = [1,1,1,2,2,2,3,3,3]
-  isls          = [2,48,95,2,48,95,2,48,95]
+  case_folder   = "/scratch/zisen347/scoping_runs/NGA/"
+  case_name     = "103_RectTurb_flame1D"
+  fields        = ["U", "U", "U", "T", "T", "T", "P", "P", "P", "RHO", "RHO", "RHO"]
+  idirs         = [3,  2,  1,  3,  2, 1,  3,  2, 1,  3,  2, 1]
+  isls          = [72, 64, 2, 72, 64, 2, 72, 64, 2, 72, 64, 2]
+  fields        = ["U", "U", "U", "T", "T", "T", "P", "P", "P"]
+  idirs         = [1, 1, 1, 1, 1, 1, 1, 1, 1]
+  isls          = [1, 2, 3, 1, 2, 3, 1, 2, 3]
+  fields        = ["T"]
+  idirs         = [1, ]
+  isls          = [1, ]
+
 
   # Initialize MPI
   comm = MPI.COMM_WORLD
@@ -35,10 +42,10 @@ if __name__ == '__main__':
 
   # Initialize NGA case
   case_path     = os.path.join(case_folder, case_name)
-  hit           = pynga.io.case(comm=comm, case_path=case_path, input="input", config="config", data_init="data.init", nover=1)
+  hit           = pynga.io.case(comm=comm, case_path=case_path, input="input", config="config.flame1D", data_init="data.init.flame1D", nover=1)
   slx, sly, slz = hit.get_slice_inner()
-  fl            = pynga.io.data_names(hit.case_path, add_data_init="data.init")         # data names
-  tl            = pynga.io.timelist(hit.case_path, add_data_init="data.init")         # list of time
+  fl            = pynga.io.data_names(hit.case_path, add_data_init="data.init.flame1D")         # data names
+  tl            = pynga.io.timelist(hit.case_path, add_data_init="data.init.flame1D")         # list of time
 
   # Initialize output folder
   resfigs_folder = "0ResFigs"; resfigs_case_folder = os.path.join(resfigs_folder, case_name)
@@ -55,7 +62,7 @@ if __name__ == '__main__':
   comm.Barrier()
  
   # For each time
-  for it in range(0, len(tl), 1):
+  for it in range(0, len(tl), 10):
     # For each field
     for fno in fields:
       # Read data
@@ -71,10 +78,12 @@ if __name__ == '__main__':
             os.mkdir(sfolder)
         comm.Barrier()
         # Write data
-        strt = '%.2E' % Decimal(tl[it])
+        strt = '%.3E' % Decimal(tl[it])
         sn = os.path.join(sfolder, strt+'.dat')
         # Write isl-th yz slice in parallel
+        print(np.mean(vars["P"]))
         hit.mpi_write_slice(field=vars[fno], fn = sn, idir=idir, index_F=isl)
+        #print(hit.iproc, hit.jproc, hit.kproc, np.amax(vars[fno]), np.unravel_index(vars[fno].argmax(), vars[fno].shape))
         comm.Barrier()
 
     # End iteration

@@ -1,11 +1,14 @@
 #%%
 import sys
 import os
+from pathlib import Path
 os.environ['MPLCONFIGDIR'] = "./tmp"
 import numpy as np
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 from scipy.interpolate import RegularGridInterpolator
+
+import cantera as ct
 
 def NGA_reader(filename, configname):
     data={}
@@ -140,107 +143,76 @@ def NGA_writer(data, filename, configname):
     f.close()
     return
 
-# Input
-nbox   = 5
-#fn_din = "/scratch/b/bsavard/zisen347/cases/103_RectTurb/data.init"
-fn_din = "./data.hitbox.6"
-#fn_cin = "/scratch/b/bsavard/zisen347/cases/103_RectTurb/config"
-fn_cin = "./config.hitbox.6"
+# Generate a 1D flame solution
+Lx      = 0.04
+U_in    = 13
+P_atm   = 1.
+T_in    = 900
+eqrt    = 0.4
+P_in    = P_atm * ct.one_atm
+mtot    = eqrt*2.0 + (1.0 + 3.76)
+X_in        = {}
+X_in["H2"]  = eqrt*2.0 / mtot
+X_in["O2"]  = 1.0 / mtot
+X_in["N2"]  = 3.76 / mtot
+gas = ct.Solution('h2o2.yaml')
+gas.TPX = T_in, P_in, X_in
+gas0D = ct.Solution('h2o2.yaml')
+gas0D.TPX = T_in, P_in, X_in
+#gas.equilibrate("HP")
+print("Unburned gas: ", gas())
+#%%
 
-din = NGA_reader(fn_din, fn_cin)
-x_in = din["X"];
-nx_in = x_in.shape[0]; 
-Lx_in = x_in[-1] - x_in[0]
+# 0. Homogeneous ignition delay time
+if (True):
+    r = ct.IdealGasConstPressureReactor(gas0D)
+    sim = ct.ReactorNet([r])
 
-# Target mesh
-Lx_out = nbox * Lx_in;  nx_out = nbox * int(1.0*nx_in);   dx_out = Lx_out / nx_out 
-Ly_out = 1.0 * Lx_in;   ny_out = int(1.0*nx_in); dy_out = Ly_out / ny_out
-Lz_out = 1.0 * Lx_in;   nz_out = int(1.0*nx_in); dz_out = Lz_out / nz_out
-x_out = np.linspace(0, Lx_out, nx_out)
-y_out = np.linspace(0, Ly_out, ny_out)
-z_out = np.linspace(0, Lz_out, nz_out)
-xx_out, yy_out, zz_out = np.meshgrid(x_out, y_out, z_out, indexing='ij')
+    t_end = 0.4
+    t = 0.0
+    told = 0.0
+    states = ct.SolutionArray(r.thermo, extra=['t', 'hrr', 'dt'])
+    while t < t_end:
+        t = sim.step()
+        states.append(r.thermo.state,
+                    t=t,
+                    hrr=np.dot(gas.net_production_rates, gas.partial_molar_enthalpies),
+                    dt=t-told)
+        told = t
+    fig, ax = plt.subplots(figsize=(4.0, 3.2))
+    ax.plot(states.t, states.T, 'r', linewidth=3.0)
+    ax.set_title("0D")
+    ax.set_ylabel("T[K]")
+    ax.set_xlabel("t[s]")
+#%%
+f = ct.BurnerFlame(gas, width=Lx)
+mdot = U_in * gas.density
+f.burner.mdot = mdot
+f.set_refine_criteria(ratio=3.0, slope=0.05, curve=0.1)
+f.transport_model = 'mixture-averaged'
+loglevel=1
+f.solve(loglevel, auto=True)
 
-# Repeat input mesh to cover the target mesh
-nrx = int(x_out[-1]/x_in[-1]) + 1
-nry = int(y_out[-1]/x_in[-1]) + 1
-nrz = int(z_out[-1]/x_in[-1]) + 1
-x_rep = np.linspace(x_in[0], x_in[-1]*nrx, nx_in*nrx)
-y_rep = np.linspace(x_in[0], x_in[-1]*nry, nx_in*nry)
-z_rep = np.linspace(x_in[0], x_in[-1]*nrz, nx_in*nrz)
-xx_rep, yy_rep, zz_rep = np.meshgrid(x_rep,y_rep,z_rep, indexing='ij')
+if "native" in ct.hdf_support():
+    output = Path() / "burner_flame.h5"
+else:
+    output = Path() / "burner_flame.yaml"
+output.unlink(missing_ok=True)
 
-dout = {}
-field_names = din["varnames"]
-for kn in field_names:
-    phi_in = np.tile(din[kn], (nrx,nry,nrz))
-    interp = RegularGridInterpolator((x_rep, y_rep, z_rep), phi_in)
-    dout[kn] = interp((xx_out, yy_out, zz_out))
+f.save(output, name="mix", description="solution with mixture-averaged transport")
 
-U_const   = 10.
-Wmix      = 2.897E-2
-P_const   = 101325.
-T_const   = 300.
-R_cst     = 8.314462
-rho_const = 1.174
-P_const   = T_const * (R_cst/Wmix) * rho_const
-
-dout = {}
-dout["RHO"] = np.ones((nx_out,ny_out,nz_out),dtype="float64",order='F')
-dout["U"]   = np.ones((nx_out,ny_out,nz_out),dtype="float64",order='F')
-dout["V"]   = np.ones((nx_out,ny_out,nz_out),dtype="float64",order='F')
-dout["W"]   = np.ones((nx_out,ny_out,nz_out),dtype="float64",order='F')
-dout["T"]   = np.ones((nx_out,ny_out,nz_out),dtype="float64",order='F')
-dout["P"]   = np.ones((nx_out,ny_out,nz_out),dtype="float64",order='F')
-dout["ZMIX"] = np.ones((nx_out,ny_out,nz_out),dtype="float64",order='F')
-
-dout["RHO"][:,:,:] = rho_const
-dout["V"][:,:,:] = 0
-dout["W"][:,:,:] = 0
-dout["P"][:,:,:] = P_const
-dout["T"][:,:,:] = T_const
-dout["ZMIX"][:,:,:] = 1.0
-
-phi_in = np.tile(din["U"], (nrx,nry,nrz))
-interp = RegularGridInterpolator((x_rep, y_rep, z_rep), phi_in)
-dout["U"] = interp((xx_out, yy_out, zz_out))
-rt=0.5*(1+np.tanh((x_out-x_out[-1]*0.15)/0.4)); plt.plot(rt)
-for i, xi in enumerate(rt):
-    dout["U"][i,:,:] = dout["U"][i,:,:]*rt[i] + U_const
+f.transport_model = 'multicomponent'
+f.set_refine_criteria(ratio=2.0, slope=0.02, curve=0.02)
+f.solve(loglevel)  # don't use 'auto' on subsequent solves
 
 
-dout["simname"]     = din["simname"]
-dout["coord"]       = din["coord"]
-dout["xper"]        = 0 #din["xper"]
-dout["yper"]        = din["yper"]
-dout["zper"]        = din["zper"]
-dout["Lx"]          = Lx_out
-dout["Ly"]          = Ly_out
-dout["Lz"]          = Lz_out
-dout["nx"]          = nx_out
-dout["ny"]          = ny_out
-dout["nz"]          = nz_out
-dout["dx"]          = dx_out
-dout["dy"]          = dy_out
-dout["dz"]          = dz_out
-dout["nVar"]        = din["nVar"]
-dout["nSpec"]       = 0
-dout["dt"]          = din["dt"]
-dout["time"]        = din["time"]
-dout["varnames"]    = din["varnames"]
-dout["varnames8"]   = din["varnames8"]
 
-print("Density      : ", np.mean(dout["RHO"]))
-print("Temperature  : ", np.mean(dout["T"]))
-print("Pressure     : ", np.mean(dout["P"]))
-print("Velocity U   : ", np.mean(dout["U"]))
-print("Velocity V   : ", np.mean(dout["V"]))
-print("Velocity W   : ", np.mean(dout["W"]))
-print("MW_mix       : ", Wmix)
-print("Lx_out       : ", Lx_out)
-print("Ly_out       : ", Ly_out)
-print("Lz_out       : ", Lz_out)
+f.save('burner_flame.csv', basis="mole", overwrite=True)
 
-NGA_writer(data=dout, filename="data.init", configname="config")
-print("Writing finished.")
+fig, ax = plt.subplots()
+ax.plot(f.flame.grid, f.T, 'o')
+#ax2 = ax.twinx()
+#ax2.plot(f.flame.grid, f.velocity, 'ro--')
+
+
 #%%
