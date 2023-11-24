@@ -5,16 +5,38 @@ from mpi4py import MPI
 import numpy as np
 import matplotlib as mpl
 import matplotlib.pyplot as plt
+import matplotlib.cm as cm
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from decimal import Decimal
 
 import pynga
 import pynga.io
 
-clims   = {}; clims["default"] = [-1, 1]
-Usolmax = 10; clims["Usol"]=[-Usolmax, Usolmax]; clims["Vsol"]=[-Usolmax, Usolmax]; clims["Wsol"]=[-Usolmax, Usolmax] 
-clims["U"]=[0, 25]; clims["V"]=[-Usolmax, Usolmax]; clims["W"]=[-Usolmax, Usolmax]; clims["P"]=[101082+1000, 101082-1000]; clims["T"]=[290, 310]; clims["RHO"]= [1.15, 1.21]
-clims["P"]=[102382+50, 102382-50]
+clims   = {}; cmaps = {}; 
+
+clims["U"]  = 45 + np.array([-25, 25])
+cmaps["U"]  = cm.viridis
+
+clims["V"]  = 0 + np.array([-20, 20]); 
+cmaps["V"]  = cm.seismic
+
+clims["W"]  = 0 + np.array([-20, 20]); 
+cmaps["W"]  = cm.seismic
+
+clims["T"]  = 1290 + np.array([-400, 400]); 
+cmaps["T"]  = cm.hot
+
+clims["RHO"]= 0.317 + np.array([-0.05, 0.05])
+cmaps["RHO"]  = cm.viridis
+
+clims["P"]  = 101325 + np.array([-500, 500])
+cmaps["P"]  = cm.seismic
+
+clims["O2"] = 0.232 + np.array([-0.2, 0.2])
+
+cmaps["default"] = cm.viridis
+clims["default"] = [-1, 1]
+
 if __name__ == '__main__':
   # Parse command-line arguments
   import argparse
@@ -23,22 +45,10 @@ if __name__ == '__main__':
 
   # Inputs
   case_folder   = "/scratch/zisen347/scoping_runs/NGA/"
-  case_name     = "103_RectTurb_flame1D"
-  fields        = ["U", "U", "U", "T", "T", "T", "P", "P", "P", "RHO", "RHO", "RHO"]
-  idirs         = [3,  2,  1,  3,  2, 1,  3,  2, 1,  3,  2, 1]
-  isls          = [72, 64, 2, 72, 64, 2, 72, 64, 2, 72, 64, 2]
-  fields        = ["V"]
-  idirs         = [1, 1, 1]
-  isls          = [358, 359, 360]
-  fields        = ["V", "U", "P", "RHO"]
-  idirs         = [1, 1, 1, 1]
-  isls          = [72, 358, 358, 358]
-  fields        = ["T"]
-  idirs         = [1, ]
-  isls          = [1]
-
-
-
+  case_name     = "104_PlanarFlame_4"
+  fields        = ["U", "V", "RHO", "T", "P", "OH", "H2O"]
+  idirs         = [2, ]
+  isls          = [40, ]
 
   # Initialize MPI
   comm = MPI.COMM_WORLD
@@ -48,10 +58,13 @@ if __name__ == '__main__':
 
   # Initialize NGA case
   case_path     = os.path.join(case_folder, case_name)
-  hit           = pynga.io.case(comm=comm, case_path=case_path, input="input", config="config.flame1D", data_init="data.init.flame1D", nover=1)
+  hit           = pynga.io.case(comm=comm, case_path=case_path, 
+                                input="input", config="ufs:config.hit", data_init="ufs:data.init.hit", nover=3)
   slx, sly, slz = hit.get_slice_inner()
-  fl            = pynga.io.data_names(hit.case_path, add_data_init="data.init.flame1D")         # data names
-  tl            = pynga.io.timelist(hit.case_path, add_data_init="data.init.flame1D")           # list of time
+  fl            = pynga.io.data_names(hit.case_path, 
+                                      add_data_init="ufs:data.init.hit")         # data names
+  tl            = pynga.io.timelist(hit.case_path, 
+                                    add_data_init="ufs:data.init.hit")           # list of time
   # Initialize output folder
   resfigs_folder = "0ResFigs"; resfigs_case_folder = os.path.join(resfigs_folder, case_name)
   resdata_folder = "0ResData"; resdata_case_folder = os.path.join(resdata_folder, case_name)
@@ -83,7 +96,8 @@ if __name__ == '__main__':
   lg[2]["extent"] = np.array([hit.x[0], hit.x[-1], hit.y[0], hit.y[-1]])
 
   # For each time
-  for it in range(0, len(tl), 10):
+  rs = range(0, len(tl), 2)
+  for it in rs:
     # For each field
     for fno in fields:
       # Read data
@@ -105,19 +119,33 @@ if __name__ == '__main__':
           phi = np.fromfile(dn, dtype='double', count=lg[idir-1]["size"][0]*lg[idir-1]["size"][1])
           phi = np.reshape(phi, lg[idir-1]["size"], order='C').transpose()
 
-          figunit = 5.5; labelsize = 22
+          figunit = 5.5; labelsize = 18
           lx = lg[idir-1]["extent"][1]-lg[idir-1]["extent"][0]
           ly = lg[idir-1]["extent"][3]-lg[idir-1]["extent"][2]
           lxy = np.sqrt(lx**2 + ly**2)
           fig, axt = plt.subplots(figsize=(figunit*lx/lxy,figunit*ly/lxy))
-
-          im = axt.imshow(phi, vmin=clims[fno][0], vmax=clims[fno][1], 
-                          cmap="viridis", origin='lower',
+          if ("V" in fields):
+            m = np.mean(phi)
+            v2 = np.sqrt(np.mean((phi-m)**2))
+            print(fno, "m", m, "rms ", v2)
+          if fno in cmaps.keys():
+            cmap = cmaps[fno]
+          else:
+            cmap = cmaps["default"]
+          if fno in clims.keys():
+            im = axt.imshow(phi, vmin=clims[fno][0], vmax=clims[fno][1], 
+                          cmap=cmap, origin='lower',
+                          extent=lg[idir-1]["extent"])
+          else:
+            im = axt.imshow(phi, #vmin=clims[fno][0], vmax=clims[fno][1], 
+                          cmap=cmap, origin='lower',
                           extent=lg[idir-1]["extent"])
           axt.set_xlabel(lg[idir-1]["xlabel"], fontsize=labelsize)
           axt.set_ylabel(lg[idir-1]["ylabel"], fontsize=labelsize)
           axt.set_xticks([lg[idir-1]["extent"][0], lg[idir-1]["extent"][1]])
           axt.set_yticks([lg[idir-1]["extent"][2], lg[idir-1]["extent"][3]])
+          axt.set_xticklabels(['%.2E'%Decimal(lg[idir-1]["extent"][0]), '%.2E'%Decimal(lg[idir-1]["extent"][1])])
+          axt.set_yticklabels(['%.2E'%Decimal(lg[idir-1]["extent"][2]), '%.2E'%Decimal(lg[idir-1]["extent"][3])])
           axt.tick_params(axis='both', which='major', labelsize=labelsize-4)
           axt.tick_params(axis='both', which='minor', labelsize=labelsize-4)
           axt.set_title(fno, fontsize=labelsize)

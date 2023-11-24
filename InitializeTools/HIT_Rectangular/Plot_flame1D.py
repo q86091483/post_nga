@@ -13,7 +13,7 @@ import cantera as ct
 
 # Input parameters ---------------------------------------
 # Input flame
-case_name = "103_RectTurb_flame1D"
+case_name = "103_RectTurb_flame1D_990K_eta1000"
 case_folder = "/scratch/zisen347/scoping_runs/NGA" 
 cn = os.path.join(case_folder, case_name)
 fn_config = os.path.join(cn, "ufs:config.flame1D")
@@ -95,7 +95,14 @@ ts = [0.0, 3.000E-4, 6.000E-04, 6.400E-04, 6.500E-04, 6.600E-04, 6.750E-04, 7.01
 ts = [0.0, 3.000E-4, 6.000E-04, 6.400E-04, 6.500E-04, 6.600E-04, 6.750E-04, 7.010E-04, 7.320E-04]
 ts = [0.0, 3E-4, 6.130E-4, 7.790E-04, 8.692E-4, 2.164E-03] #9.760E-04, 1.014E-03]
 ts = [0.0, 3.100E-04, 6.100E-04, 6.300E-04, 6.800E-04, 8E-4, 8.900E-04] 
-ts = [0.0, 1.610E-04, 2.390E-04, 2.740E-04, 3.150E-04, 3.610E-04, 4.390E-04, 4.900E-04, 5.630E-04, 6.120E-04, 6.580E-04, 6.900E-04, 8.360E-04, 9.300E-04, 1.080E-03, 1.116E-03, 1.237E-3, 1.305E-03, 1.416E-03, 1.600E-03, 1.758E-03, 2.000E-03, 2.2E-3]
+ts = [0.0, 2.120E-04]
+ts_990K = [0.0, 1.610E-04, 2.390E-04, 2.740E-04, 3.150E-04, 3.610E-04, 
+      4.390E-04, 4.900E-04, 5.630E-04, 6.120E-04, 6.580E-04, 6.900E-04, 
+      8.360E-04, 9.300E-04, 1.080E-03, 1.116E-03, 1.237E-3, 1.305E-03, 1.416E-03, 1.600E-03, 1.758E-03, 2.000E-03, 2.2E-3, 2.597E-03, 2.834E-03,3.005E-03,
+      3.188E-03]
+ts_1D = [0.0, 1E-5, 2E-5, 3.001E-5, 5.001E-5, 8.000E-5, 1E-4, 2.9E-4, 5.800E-04, 7.5E-4, 1.137E-03, ]
+ts = ts_990K
+
 
 fig, axs = plt.subplots(figsize=(10,8), ncols=npx, nrows=npy)
 fns = ["data.init.flame1D"]
@@ -115,9 +122,12 @@ for i, fn in enumerate(fns):
             ax = axs[ipy, ipx]; idn = ipx*npx + ipy; fdn = field_names[idn]
             phi = res[fdn][0:nx,5,5] 
             ax.plot(x, phi, label="%.2E"%(ts[i]), color=colors[i], linewidth=2.5)
-            #if fdn == "U":
-            #    ax.set_ylim([0, 0.8])
-
-ax.legend()
+            labelsize=20
+            ax.set_ylabel(fdn, fontsize=labelsize)
+            ax.tick_params(axis='both', which='major', labelsize=labelsize-4)
+            ax.tick_params(axis='both', which='minor', labelsize=labelsize-4)
+            if idn == 3:
+                ax.legend(loc="lower right")
 ax2 = ax.twinx()
+plt.savefig("laminar1D.png", dpi=300, bbox_inches="tight")
 #%%

@@ -6,26 +6,31 @@ os.environ['MPLCONFIGDIR'] = "./tmp"
 import numpy as np
 import matplotlib as mpl
 import matplotlib.pyplot as plt
+import matplotlib.cm as cm
 from scipy.interpolate import interp1d
+from scipy.interpolate import RegularGridInterpolator
 import pandas as pd
 import cantera as ct
 
 # Input parameters ---------------------------------------
 # Input flame
-cn = "Solu_H2_990K_1atm_phi0.35.csv"
+cn = "Solu_H2_990K_1atm_phi0.35_Uin35.0.csv"
 df = pd.read_csv(cn)
 
 # Mechanism
 mech    = "h2o2.yaml"
 # Species for initilization
 spn_out = ["N2", "H", "O2", "O", "OH", "H2", "H2O", "HO2", "H2O2"]
-insert_flame = False     # True - Y, T = Cantera solution
+insert_flame = True     # True - Y, T = Cantera solution
                         # False - Y, T = inlet
-if_hit  = True          # True - no velocity fluctuations
+impose_hit   = True     # True - no velocity fluctuations
                         # False - interpolate from HIT box solution
 if_correct_N2 = True    # N2 = 1 - rest
-fn_din  = "./data.hitbox.6"
-fn_cin  = "./config.hitbox.6"
+if_replace_fuel = False  # Y(H2)=0; Y(N2)=Y(N2)+Y(H2)
+# Impose hit from file
+fd_din = "/home/zisen347/scratch/scoping_runs/NGA/104_PlanarFlame_3"
+fn_din = os.path.join(fd_din, "ufs:data_4.440E-04")
+fn_cin = os.path.join(fd_din, "ufs:config.hit")
 
 iflame = np.argmax(df.temperature > (df.temperature[0]+400.))
 xflame = df.x[iflame]
@@ -35,13 +40,13 @@ gradT = 0.5 * (gradT_r + gradT_l)
 lf = (df.temperature.values[-1] - df.temperature[0]) / gradT
 print("Laminar flame thickness [mm]: ", lf*1000)
 
-Lflame = 0.038661402780000007 #0.0222538
-nx_out = 1180
-ny_out = 10
-nz_out = 10
-Lx_out = Lflame * 1.0
-Ly_out = Lx_out * (ny_out / nx_out)
-Lz_out = Lx_out * (nz_out / nx_out)
+Lflame = 4.06E-4 * 14.3 * 2.45 * 2.718 
+nx_out = 96*7; xper_out = 0
+ny_out = 96;   yper_out = 1
+nz_out = 96;   zper_out = 1
+Lx_out = 4.315E-3*7  # Lflame * 1.0
+Ly_out = 4.315E-3    # Lx_out * (ny_out / nx_out)
+Lz_out = 4.325E-3    # Lx_out * (nz_out / nx_out)
 print("Laminar flame thickness resolved by ", lf / (Lx_out/nx_out), " points.")
 
 new_pos = xflame + 0.0 * Lflame
@@ -54,7 +59,12 @@ rho_in  = df["density"][0]
 x_out = np.linspace(0, Lx_out, nx_out+1)
 y_out = np.linspace(0, Ly_out, ny_out+1)
 z_out = np.linspace(0, Lz_out, nz_out+1)
+xcell_out = (x_out[0:-1] + x_out[1:]) / 2.
+ycell_out = (y_out[0:-1] + y_out[1:]) / 2.
+zcell_out = (z_out[0:-1] + z_out[1:]) / 2.
 xx_out, yy_out, zz_out = np.meshgrid(x_out, y_out, z_out, indexing='ij')
+xxcell_out, yycell_out, zzcell_out = np.meshgrid(xcell_out, ycell_out, zcell_out, indexing='ij')
+
 #%%
 # ---------- Reader ----------
 def NGA_reader(dataname, configname):
@@ -190,6 +200,7 @@ def NGA_writer(data, dataname, configname):
     return
 
 # 1. Write config & data.init ---------------------------------------
+print("Delcaring dout.")
 dout = {}
 dout["RHO"] = np.zeros((nx_out,ny_out,nz_out),dtype="float64",order='F')
 dout["U"]   = np.zeros((nx_out,ny_out,nz_out),dtype="float64",order='F')
@@ -202,7 +213,7 @@ for spn in spn_out:
 
 # RHO, T, P, mean velocity
 if insert_flame:
-
+    print("Inserting flame.")
     xinterp = df.x.values + new_pos - xflame
     if xinterp[0] > x_out[0]:
         xinterp[0] = x_out[0] - 1.0
@@ -231,7 +242,7 @@ if insert_flame:
             dout["T"][:,j,k] = T_1D[0:nx_out]
             dout["U"][:,j,k] = U_1D[0:nx_out]
             for spn in spn_out:
-                dout[spn][:,j,k] =  Y_1D[spn][0:nx_out] #* d_1D[0:nx_out]  
+                dout[spn][:,j,k] =  Y_1D[spn][0:nx_out] 
 else:
     dout["RHO"][:,:,:] = rho_in
     dout["P"][:,:,:] = P_in
@@ -240,11 +251,71 @@ else:
     for spn in spn_out:
         dout[spn][:,:,:] = df[spn].values[0]
 
+if if_replace_fuel:
+    "Replacing fuel."
+    gas = ct.Solution(mech)
+    Ynew        = {}
+    for spn in spn_out:
+        Ynew[spn]  = df[spn].values[0]
+    Ynew["N2"] = Ynew["N2"] + Ynew["H2"]
+    Ynew["H2"] = 0.0
+    gas_new = ct.Solution(mech)
+    gas_new.TPY = T_in, P_in, Ynew
+    dout["RHO"][:,:,:] = gas_new.density
+    dout["P"][:,:,:] = gas_new.P
+    dout["T"][:,:,:] = gas_new.T
+    for spn in spn_out:
+        dout[spn][:,:,:] = Ynew[spn]
+
+if impose_hit:
+    print("Imposing HIT.")
+    n_extend = 3
+    dhit = NGA_reader(fn_din, fn_cin)
+    x_in        = dhit["x"]
+    y_in        = dhit["y"]
+    z_in        = dhit["z"]
+    xcell_in    = (x_in[0:-1]+x_in[1:]) / 2.
+    ycell_in    = (y_in[0:-1]+y_in[1:]) / 2.
+    zcell_in    = (z_in[0:-1]+z_in[1:]) / 2.
+    nx_in       = x_in.shape[0]; 
+    ny_in       = y_in.shape[0]; 
+    nz_in       = z_in.shape[0]; 
+    nxcell_in   = nx_in - 1 
+    nycell_in   = ny_in - 1 
+    nzcell_in   = nz_in - 1 
+    Lx_in       = x_in[-1] - x_in[0]
+    Ly_in       = y_in[-1] - y_in[0]
+    Lz_in       = z_in[-1] - z_in[0]
+    nrx = int(Lx_out / Lz_in) + 1 # Start from (x,y,z) = (0,0,0)
+    nry = int(Ly_out / Lz_in) + 1
+    nrz = int(Lz_out / Lz_in) + 1
+    x_rep = np.linspace(x_in[0], x_in[0]+Lx_in*nrx, nxcell_in*nrx+1)
+    y_rep = np.linspace(y_in[0], y_in[0]+Ly_in*nry, nycell_in*nry+1)
+    z_rep = np.linspace(z_in[0], z_in[0]+Lz_in*nrz, nzcell_in*nrz+1)
+    xcell_rep = (x_rep[0:-1] + x_rep[1:]) / 2.      # Convert to cell
+    ycell_rep = (y_rep[0:-1] + y_rep[1:]) / 2.
+    zcell_rep = (z_rep[0:-1] + z_rep[1:]) / 2.
+    xcell_rep[0] = np.amin([xcell_rep[0], xcell_out[0]]) # Fix boundary
+    ycell_rep[0] = np.amin([ycell_rep[0], ycell_out[0]])
+    zcell_rep[0] = np.amin([zcell_rep[0], zcell_out[0]])
+    xcell_rep[-1] = np.amax([xcell_rep[-1], xcell_out[-1]]) 
+    ycell_rep[-1] = np.amax([ycell_rep[-1], ycell_out[-1]])
+    zcell_rep[-1] = np.amax([zcell_rep[-1], zcell_out[-1]])
+    for vn in ["U", "V", "W"]:
+        phi_in = np.tile(dhit[vn]-np.mean(dhit[vn]), (nrx,nry,nrz))
+        interp3D = RegularGridInterpolator((xcell_rep, ycell_rep, zcell_rep), phi_in)
+        fluct   =  interp3D((xxcell_out, yycell_out, zzcell_out))
+        if (False): # If cut velocity flucutation near inlet
+            rt=0.5*(1+np.tanh((xcell_out-xcell_out[-1]*0.08)/(0.08*Ly_out))); plt.plot(rt)
+            for i, xi in enumerate(rt):
+                fluct[i,:,:] = fluct[i,:,:]*rt[i]
+        dout[vn] = dout[vn] + fluct
+
 dout["simname"]     = "planar flame"
 dout["coord"]       = 0
-dout["xper"]        = 0 
-dout["yper"]        = 1
-dout["zper"]        = 1
+dout["xper"]        = xper_out 
+dout["yper"]        = yper_out
+dout["zper"]        = zper_out
 dout["Lx"]          = Lx_out
 dout["Ly"]          = Ly_out
 dout["Lz"]          = Lz_out
@@ -266,16 +337,60 @@ dout["varnames8"]   = []
 for strt in dout.keys():
     dout["varnames8"].append(strt.ljust(8))
 
-NGA_writer(data=dout, dataname="data.init.flame1D", configname="config.flame1D")
+# Write
+NGA_writer(data=dout, dataname="ufs:data.init.hit", configname="ufs:config.hit")
 
-res = NGA_reader(dataname="data.init.flame1D", configname="config.flame1D")
+# Read & test
+res = NGA_reader(dataname="ufs:data.init.hit", configname="ufs:config.hit")
 
-fn = "H2"
+#%%
+# Print to screen
+fn = "U"
 fig, ax = plt.subplots(figsize=(3,2.4))
 ax.plot(res["x"][0:nx_out], res[fn][0:nx_out,        0,        0], 'r')
 ax.plot(res["x"][0:nx_out], res[fn][0:nx_out,        0, nz_out-1], 'b-')
 ax.plot(res["x"][0:nx_out], res[fn][0:nx_out, ny_out-1,        0], 'm-.')
 ax.plot(res["x"][0:nx_out], res[fn][0:nx_out, ny_out-1, nz_out-1], 'g:')
 ax.set_title(fn)
+if nx_out>10 and ny_out>10 and nz_out>10:
+    phi = dout[fn][:,0,:]
+    fig, ax = plt.subplots()
+    im=ax.imshow(phi.transpose(), origin="lower", cmap=cm.viridis)
+    fig.colorbar(im, ax=ax, shrink=0.9, location="top")
+
+print("                             ", "(mean/max/min)")
+print("Density      : ", np.mean(dout["RHO"]),np.amax(dout["RHO"]),np.amin(dout["RHO"]))
+print("Temperature  : ", np.mean(dout["T"]),np.amax(dout["T"]),np.amin(dout["T"]))
+print("Pressure     : ", np.mean(dout["P"]),np.amax(dout["P"]),np.amin(dout["P"]))
+print("Velocity U   : ", np.mean(dout["U"]),np.amax(dout["U"]),np.amin(dout["U"]))
+print("Velocity V   : ", np.mean(dout["V"]),np.amax(dout["V"]),np.amin(dout["V"]))
+print("Velocity W   : ", np.mean(dout["W"]),np.amax(dout["W"]),np.amin(dout["W"]))
+yns = ["OH", "H"]
+for yn in yns:
+    phi = dout[yn]
+    print(yn.ljust(13)+": ", np.mean(phi),np.amax(phi),np.amin(phi))
+print("Lx_out       : ", dout["x"][0], dout["x"][-1])
+print("Ly_out       : ", dout["y"][0], dout["y"][-1])
+print("Lz_out       : ", dout["z"][0], dout["z"][-1])
+print("dx           : ", dout["dx"])
+print("dy           : ", dout["dy"])
+print("dz           : ", dout["dz"])
+print("xper         : ", dout["xper"])
+print("yper         : ", dout["yper"])
+print("zper         : ", dout["zper"])
+print("Inlet gas    : ",)
+
+gas_inlet = ct.Solution(mech)
+Y_inlet = {}
+for spn in spn_out:
+    Y_inlet[spn] = np.mean(dout[spn][0,:,:])
+    gas_inlet = ct.Solution(mech)
+    gas_inlet.TPY = np.mean(dout["T"][0,:,:]), np.mean(dout["P"][0,:,:]), Y_inlet
+print("Viscosity    : ", gas_inlet.viscosity)
+print("Temperature  : ", gas_inlet.T)
+print("Pressure     : ", gas_inlet.P)
+print("Density      : ", gas_inlet.density)
+print("Gamma        : ", gas_inlet.cp/gas_inlet.cv)
+print("Mean MW      : ", gas_inlet.mean_molecular_weight)
 
 #%%

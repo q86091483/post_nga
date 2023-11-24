@@ -6,26 +6,30 @@ os.environ['MPLCONFIGDIR'] = "./tmp"
 import numpy as np
 import matplotlib as mpl
 import matplotlib.pyplot as plt
+import matplotlib.cm as cm
 from scipy.interpolate import interp1d
+from scipy.interpolate import RegularGridInterpolator
 import pandas as pd
 import cantera as ct
 
 # Input parameters ---------------------------------------
 # Input flame
-cn = "Solu_H2_950K_1atm_phi0.4.csv"
+cn = "Solu_H2_990K_1atm_phi0.35_Uin35.0.csv"
 df = pd.read_csv(cn)
+
 # Mechanism
 mech    = "h2o2.yaml"
 # Species for initilization
 spn_out = ["N2", "H", "O2", "O", "OH", "H2", "H2O", "HO2", "H2O2"]
-insert_flame  = False    # True - Y, T = Cantera solution
+insert_flame = False    # True - Y, T = Cantera solution
                         # False - Y, T = inlet
-if_hit  = False          # True - no velocity fluctuations
+impose_hit   = True     # True - no velocity fluctuations
                         # False - interpolate from HIT box solution
 if_correct_N2 = True    # N2 = 1 - rest
-ratio_U = 10.0
-fn_din  = "./data.hitbox.6"
-fn_cin  = "./config.hitbox.6"
+if_replace_fuel = True
+fd_din = "/home/zisen347/scratch/scoping_runs/NGA/101_BoxHIT_ZeroH2_1"
+fn_din = os.path.join(fd_din, "ufs:data_3.700E-03")
+fn_cin = os.path.join(fd_din, "ufs:config.hit")
 
 iflame = np.argmax(df.temperature > (df.temperature[0]+400.))
 xflame = df.x[iflame]
@@ -35,21 +39,16 @@ gradT = 0.5 * (gradT_r + gradT_l)
 lf = (df.temperature.values[-1] - df.temperature[0]) / gradT
 print("Laminar flame thickness [mm]: ", lf*1000)
 
-#%%
-L_to_lf = 5; nf = 8
-nx_out = 12 * nf * L_to_lf
-ny_out =  1 * nf * L_to_lf
-nz_out =  1 * nf * L_to_lf
-Lx_out = 12 * lf * L_to_lf
-Ly_out =  1 * lf * L_to_lf #Lx_out * (ny_out / nx_out)
-Lz_out =  1 * lf * L_to_lf #Lx_out * (nz_out / nx_out)
-print("Lx: ", Lx_out*1000, " [mm],  nx = ", nx_out)
-print("Ly: ", Ly_out*1000, " [mm],  ny = ", ny_out)
-print("Lz: ", Lz_out*1000, " [mm],  nz = ", nz_out)
+Lflame = 4.06E-4 * 14.3 * 2.45 * 2.718 
+nx_out = 96*7; xper_out = 0
+ny_out = 96;   yper_out = 1
+nz_out = 96;   zper_out = 1
+Lx_out = 4.315E-3*7  # Lflame * 1.0
+Ly_out = 4.315E-3  #Lx_out * (ny_out / nx_out)
+Lz_out = 4.325E-3  #Lx_out * (nz_out / nx_out)
 print("Laminar flame thickness resolved by ", lf / (Lx_out/nx_out), " points.")
-Lt = 0.2 * Ly_out
 
-new_pos = xflame
+new_pos = xflame + 0.0 * Lflame
 U_in    = df["velocity"][0]
 P_atm   = df["pressure"][0] / ct.one_atm
 P_in    = df["pressure"][0]
@@ -59,7 +58,12 @@ rho_in  = df["density"][0]
 x_out = np.linspace(0, Lx_out, nx_out+1)
 y_out = np.linspace(0, Ly_out, ny_out+1)
 z_out = np.linspace(0, Lz_out, nz_out+1)
+xcell_out = (x_out[0:-1] + x_out[1:]) / 2.
+ycell_out = (y_out[0:-1] + y_out[1:]) / 2.
+zcell_out = (z_out[0:-1] + z_out[1:]) / 2.
 xx_out, yy_out, zz_out = np.meshgrid(x_out, y_out, z_out, indexing='ij')
+xxcell_out, yycell_out, zzcell_out = np.meshgrid(xcell_out, ycell_out, zcell_out, indexing='ij')
+
 #%%
 # ---------- Reader ----------
 def NGA_reader(dataname, configname):
@@ -171,7 +175,6 @@ def NGA_writer(data, dataname, configname):
     f = open(dataname, "w")
     print("NGA_writer - data file")
     # nx, ny, nz 
-    dims = np.asarray([data["nx"], data["ny"], data["nz"], data["nVar"]])
     dims.astype("int32").tofile(f)
     print("Writing nx, ny, nz: ", dims)
     # dt, time 
@@ -194,91 +197,56 @@ def NGA_writer(data, dataname, configname):
     f.close()
     return
 
-# 1. Write config & data.init ---------------------------------------
-dout = {}
-dout["RHO"] = np.zeros((nx_out,ny_out,nz_out),dtype="float64",order='F')
-dout["U"]   = np.zeros((nx_out,ny_out,nz_out),dtype="float64",order='F')
-dout["V"]   = np.zeros((nx_out,ny_out,nz_out),dtype="float64",order='F')
-dout["W"]   = np.zeros((nx_out,ny_out,nz_out),dtype="float64",order='F')
-dout["T"]   = np.zeros((nx_out,ny_out,nz_out),dtype="float64",order='F')
-dout["P"]   = np.zeros((nx_out,ny_out,nz_out),dtype="float64",order='F')
-for spn in spn_out:
-    dout[spn] = np.zeros((nx_out,ny_out,nz_out),dtype="float64",order='F')
+# ---------- Inflow turbulence writer ----------
+dhit = NGA_reader(fn_din, fn_cin)
+def NGA_inflowturb_writer(data, dataname, tcur=0.0):
+    f = open(dataname, "w")
+    varnames = ["U", "V", "W"]
+    # nx, ny, nz, nVar
+    dims = np.asarray([data["nx"], data["ny"], data["nz"], int(len(varnames))])
+    print(dims)
+    dims.astype("int32").tofile(f)
+    # dt, time
+    time = (data["x"][-1] - data["x"][0]) / np.mean(data["U"])
+    dt = time / data["nx"]
+    np.asarray([dt]).astype("float64").tofile(f)
+    np.asarray([time]).astype("float64").tofile(f)
+    # varnames
+    for iVar, vn in enumerate(varnames):
+        varname8 = vn.ljust(8)
+        bin_varname = [ord(varname8[i]) for i in range(8)]
+        np.asarray(bin_varname).astype("int8").tofile(f)
+    # icyl
+    np.asarray([0]).astype("int32").tofile(f)
+    # y, z
+    y = data["y"]
+    z = data["z"]
+    y = y.flatten(order='F')
+    z = z.flatten(order='F')
+    y.astype("float64").tofile(f)
+    z.astype("float64").tofile(f)
 
-# RHO, T, P, mean velocity
-if insert_flame:
-    xinterp = df.x.values
-    if xinterp[0] > x_out[0]:
-        xinterp[0] = x_out[0] - 1.0
-    if xinterp[1] < x_out[-1]:
-        xinterp[1] = x_out[-1] + 1.0
+    # Write
+    rt = tcur / time
+    rt = 1 - (rt - int(rt))
+    nx = data["nx"]
+    imid = np.amax([int(rt * nx), 0])
+    imid = np.amin([imid, nx-1])
+    sorder = list(reversed(range(0,imid+1))) + list(reversed(range(imid+1,nx))) 
+    print(sorder)
 
-    f_T = interp1d(xinterp, df.temperature)
-    f_P = interp1d(xinterp, df.pressure)
-    f_d = interp1d(xinterp, df.density)
-    f_U = interp1d(xinterp, df.velocity)
+    # field - flipped around x direction
+    vns = ["U", "V", "W"]
+    #for ix in reversed(range(0, data["nx"])):
+    for ix in sorder:
+        buf = np.zeros((data["ny"],data["nz"], len(vns)), order="F")
+        for iv, fn in enumerate(vns):
+            buf[:,:,iv] = data[fn][ix,:,:]
+            res  = data[fn][ix,:,:]
+            output = res.flatten(order='F')
+            output.astype("float64").tofile(f)
 
-    T_1D = f_T(x_out)
-    P_1D = f_P(x_out)
-    d_1D = f_d(x_out)
-    U_1D = f_U(x_out)
-
-    Y_1D = {}
-    for spn in spn_out:
-        f_Y = interp1d(xinterp, df[spn].values)
-        Y_1D[spn] = f_Y(x_out)
-    for j in range(0, ny_out):
-        for k in range(0, nz_out):
-            dout["RHO"][:,j,k] = d_1D[0:nx_out]
-            dout["P"][:,j,k] = P_1D[0:nx_out]
-            dout["T"][:,j,k] = T_1D[0:nx_out]
-            dout["U"][:,j,k] = U_1D[0:nx_out]
-            for spn in spn_out:
-                dout[spn][:,j,k] =  Y_1D[spn][0:nx_out] #* d_1D[0:nx_out]  
-else:
-    dout["RHO"][:,:,:] = rho_in
-    dout["P"][:,:,:] = P_in
-    dout["T"][:,:,:] = T_in
-    dout["U"][:,:,:] = U_in * ratio_U
-    for spn in spn_out:
-        dout[spn][:,:,:] = df[spn].values[0]
-
-dout["simname"]     = "planar flame"
-dout["coord"]       = 0
-dout["xper"]        = 0 
-dout["yper"]        = 1
-dout["zper"]        = 1
-dout["Lx"]          = Lx_out
-dout["Ly"]          = Ly_out
-dout["Lz"]          = Lz_out
-dout["nx"]          = nx_out
-dout["ny"]          = ny_out
-dout["nz"]          = nz_out
-dout["x"]           = x_out
-dout["y"]           = y_out
-dout["z"]           = z_out
-dout["dx"]          = Lx_out / (nx_out - 1)
-dout["dy"]          = Ly_out / (ny_out - 1)
-dout["dz"]          = Lz_out / (nz_out - 1)
-dout["dt"]          = 1E-10
-dout["time"]        = 0.0
-dout["varnames"]    = ["RHO", "U", "V", "W", "T", "P"]
-dout["varnames"]    = dout["varnames"] + spn_out
-dout["nVar"]        = len(dout["varnames"])
-dout["varnames8"]   = []
-for str in dout.keys():
-    dout["varnames8"].append(str.ljust(8))
-
-NGA_writer(data=dout, dataname="data.init.turb3D", configname="config.turb3D")
-
-res = NGA_reader(dataname="data.init.turb3D", configname="config.turb3D")
-
-fn = "U"
-fig, ax = plt.subplots(figsize=(3,2.4))
-ax.plot(res["x"][0:nx_out], res[fn][0:nx_out,        0,        0], 'r')
-ax.plot(res["x"][0:nx_out], res[fn][0:nx_out,        0, nz_out-1], 'b-')
-ax.plot(res["x"][0:nx_out], res[fn][0:nx_out, ny_out-1,        0], 'm-.')
-ax.plot(res["x"][0:nx_out], res[fn][0:nx_out, ny_out-1, nz_out-1], 'g:')
-ax.set_title(fn)
-
+    f.close()
+    return 
+NGA_inflowturb_writer(dhit, "ufs:inflow.dat", tcur=4.440E-4)
 #%%

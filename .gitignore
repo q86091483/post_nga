@@ -1,3 +1,5 @@
+ufs*
+*.csv
 core*
 pynga/__pycache__/
 *.dat

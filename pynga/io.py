@@ -33,9 +33,9 @@ class case:
     Lz                  = 0.
     icyl                = 0
     is_per              = np.zeros((3)) 
-    npx                 = 2
-    npy                 = 4
-    npz                 = 5
+    npx                 = 4
+    npy                 = 1
+    npz                 = 1
     nxo         = nyo         = nzo         = None
     nxo_        = nyo_        = nzo_        = None
     # Fortran index starting from 1

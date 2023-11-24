@@ -12,9 +12,10 @@ import cantera as ct
 #%%
 # 0. Initialize parameter ---------------------------------------
 Lx1D    = 4.06E-4 * 14.3 * 2.45 * 2.718   #0.0222538
+#Lx1D    = 0.0035
 P_atm   = 1.
-T_in    = 990   #950
-eqrt    = 0.35  #0.4
+T_in    = 300   #950
+eqrt    = 0.4  #0.4
 P_in    = P_atm * ct.one_atm
 mech    = "h2o2.yaml"
 
@@ -35,7 +36,8 @@ gas0D = ct.Solution(mech)
 gas0D.TPX = T_in, P_in, X_in
 print("Unburned gas: ", gas()) 
 print("Viscosity", gas.viscosity)
-
+print("density", gas.density)
+#%%
 # 1. Homogeneous ignition delay time ----------------------------
 if (True):
     r = ct.IdealGasConstPressureReactor(gas0D)
@@ -54,8 +56,9 @@ if (True):
         told = t
 
     fig, ax = plt.subplots(figsize=(4.0, 3.2))
-    indx = np.where(states.T>states.T[0]+400.)[0][0]
-    ax.plot(states.t[0:int(2.5*indx)], states.T[0:int(2.5*indx)], 'r', linewidth=3.0)
+    if np.amax(states.T) > (states.T[0]+400.):
+        indx = np.where(states.T>states.T[0]+400.)[0][0]
+        ax.plot(states.t[0:int(2.5*indx)], states.T[0:int(2.5*indx)], 'r', linewidth=3.0)
     ax.set_title("0D")
     ax.set_ylabel("T[K]", fontsize=24)
     ax.set_xlabel("t[s]", fontsize=24)
@@ -64,6 +67,7 @@ if np.amax(states.T > (states.T[0]+400)):
     indx = np.where(states.T>states.T[0]+400.)[0][0]
     print("0D ignition delay time: ", states.t[indx])
 
+#%%
 # 2. One-dimensional premixed flame -----------------------------
 loglevel=1
 f = ct.FreeFlame(gas, grid=init_grid)
@@ -71,7 +75,7 @@ f.set_max_grid_points(domain=f.domains[1], npmax=10000)
 f.set_refine_criteria(ratio=3.0, slope=0.1, curve=0.1)
 f.transport_model = 'mixture-averaged'
 f.solve(loglevel, auto=True)
-f.transport_model = 'mixture-averaged' #'multicomponent'
+f.transport_model = 'multicomponent'
 f.set_refine_criteria(ratio=2.0, slope=0.005, curve=0.005)
 f.solve(loglevel)  # don't use 'auto' on subsequent solves
 f.save('burner_flame.csv', basis="mole", overwrite=True)
@@ -107,18 +111,32 @@ if np.amax(states.T > (states.T[0]+400)):
     ax.plot([res.x[indx_1D], res.x[indx_1D]], [T_in, T_in+800], "r--")
     ax.set_title("1D", fontsize=24)
 
-strt = "Solu_H2_" + str(int(T_in)) + "K_" + str(int(P_atm)) + "atm_phi" + str(eqrt) 
+strt = "Solu_H2_" + str(int(T_in)) + "K_" + str(int(P_atm)) + "atm_phi" + str(eqrt) + "_Uin" + "%.1f"%(res.velocity.values[0])
 res.to_csv(strt+".csv")
 
+# Thickenss based on T+400
 iflame = np.argmax(res.temperature > (res.temperature[0]+400.))
 xflame = res.x[iflame]
 gradT_r = (res.temperature[iflame+1] - res.temperature[iflame]) / (res.x[iflame+1] - res.x[iflame])
 gradT_l = (res.temperature[iflame] - res.temperature[iflame-1]) / (res.x[iflame] - res.x[iflame-1])
 gradT = 0.5 * (gradT_r + gradT_l)
 lf = (res.temperature.values[-1] - res.temperature[0]) / gradT
+# Thickness based on max Tgrad
+Ts = res.temperature.values
+xs = res.x.values
+gradT = (Ts[1:] - Ts[0:-1]) / (xs[1:] - xs[0:-1])
+iflame1 = np.argmax(gradT)
+xflame1 = res.x[iflame1]
+gradT_r = (res.temperature[iflame1+1] - res.temperature[iflame1]) / (res.x[iflame1+1] - res.x[iflame1])
+gradT_l = (res.temperature[iflame1] - res.temperature[iflame1-1]) / (res.x[iflame1] - res.x[iflame1-1])
+gradT = 0.5 * (gradT_r + gradT_l)
+lf1 = (res.temperature.values[-1] - res.temperature[0]) / gradT
+
 print("Domain size      : ", Lx1D)
 print("U_in             : ", res.velocity[0])
 print("Flame location   : ", xflame)
 print("Laminar flame thickness [mm]: ", lf*1000)
+print("Laminar flame thickness [mm]: ", lf1*1000)
+
 
 #%%
