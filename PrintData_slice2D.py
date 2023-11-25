@@ -12,7 +12,7 @@ import pynga.io
 
 clims   = {}; clims["default"] = [-1, 1]
 clims["Usol"]=[-8, 8]; clims["Vsol"]=[-8, 8]; clims["Wsol"]=[-8, 8] 
-clims["U"]=[45, 55]; clims["V"]=[-8, 8]; clims["W"]=[-8, 8] 
+clims["U"]=[-6, 6]; clims["V"]=[-6, 6]; clims["W"]=[-6, 6] 
 
 if __name__ == '__main__':
   # Parse command-line arguments
@@ -21,11 +21,15 @@ if __name__ == '__main__':
   #parser.add_argument("-case_path",  "--case_path",  type=str, required=True)
 
   # Inputs
-  case_folder   = "/home/zisen347/scratch/scoping_runs/NGA/" 
-  case_name     = "104_PlanarFlame_4"
-  fields        = ["P", "U", "V", "RHO", "T", "W", "OH", "H2O", ]
-  idirs         = [2,]
-  isls          = [40, ]
+  case_folder   = "/scratch/b/bsavard/zisen347/cases/"
+  case_name     = "BoxHIT_ForcingUs_1"
+  fields        = ["U", "V", "W", "P", "RHO", "T"] + ["U", "V", "W", "P", "RHO", "T"]
+  idirs         = [2, 2, 2, 2, 2, 2] + [2, 2, 2, 2, 2, 2]
+  isls          = [1, 1, 1, 1, 1, 1] + [2, 2, 2, 2, 2, 2]
+
+  fields = ["P"] * 6 + ["V"] * 6
+  idirs = [1, 1, 2, 2, 3, 3] * 2
+  isls = [1, 96, 1, 96, 1, 96] * 2
 
   # Initialize MPI
   comm = MPI.COMM_WORLD
@@ -35,14 +39,16 @@ if __name__ == '__main__':
 
   # Initialize NGA case
   case_path     = os.path.join(case_folder, case_name)
-  hit           = pynga.io.case(comm=comm, case_path=case_path, input="input", config="ufs:config.hit", data_init="ufs:data.init.hit", nover=3)
+  hit           = pynga.io.case(comm=comm, case_path=case_path, input="input", config="0config", data_init="0data", nover=0)
   slx, sly, slz = hit.get_slice_inner()
-  fl            = pynga.io.data_names(hit.case_path, add_data_init="ufs:data.init.hit")         # data names
-  tl            = pynga.io.timelist(hit.case_path, add_data_init="ufs:data.init.hit")         # list of time
+  fl            = pynga.io.data_names(hit.case_path, add_data_init="0data")         # data names
+  tl            = pynga.io.timelist(hit.case_path, add_data_init="0data")         # list of time
+  print("PrintData processing: ", fl)
 
   # Initialize output folder
   resfigs_folder = "0ResFigs"; resfigs_case_folder = os.path.join(resfigs_folder, case_name)
   resdata_folder = "0ResData"; resdata_case_folder = os.path.join(resdata_folder, case_name)
+  print(resdata_case_folder)
   if (myid == 0):
     if not os.path.exists(resfigs_folder):
       os.mkdir(resfigs_folder)
@@ -55,7 +61,8 @@ if __name__ == '__main__':
   comm.Barrier()
  
   # For each time
-  rs = range(0, len(tl), 2)
+  rs = range(0, len(tl), 1)
+  print(rs)
   for it in rs:
     # For each field
     for fno in fields:
@@ -63,8 +70,8 @@ if __name__ == '__main__':
       dname = fl[it]
       vars = hit.mpi_read_data(comm, dat_name=dname)
       for i, v in enumerate(idirs):
-        idir    = idirs[i]                  # Plane yz normal to x
-        isl     = isls[i]                   # DNS grids 1-192, so we output the mid-plane
+        idir    = idirs[i]                  
+        isl     = isls[i]                   
         sfolder = fno + "_" + str(idir) + "_" + str(isl).zfill(4)
         sfolder = os.path.join(resdata_case_folder, sfolder)
         if (myid == 0):

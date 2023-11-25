@@ -22,10 +22,10 @@ if __name__ == '__main__':
   mypn = MPI.Get_processor_name()
 
   # Initialize HIT case
-  case_folder   = "/scratch/b/bsavard/zisen347/cases"
-  case_name     = "BoxHIT_ForcingUs"
+  case_folder   = "/scratch/b/bsavard/zisen347/cases/"
+  case_name     = "BoxHIT_ForcingUs_1"
   case_path     = os.path.join(case_folder, case_name)
-  hit           = pynga.io.case(comm=comm, case_path=case_path, input="input", config="config", data_init="data.init", nover=1)
+  hit           = pynga.io.case(comm=comm, case_path=case_path, input="input", config="0config", data_init="0data", nover=0)
   slx, sly, slz = hit.get_slice_inner()
   fl            = pynga.io.data_names(hit.case_path)         # data names
   tl            = pynga.io.timelist(hit.case_path)           # list of time
@@ -52,10 +52,10 @@ if __name__ == '__main__':
   res_urms  = []
   res_vrms  = []
   res_wrms  = []
-  A = 0.7
+  A = 0.7536
   tau = 1 / (2*A)
+  Lt = 6.28 * 0.18
   for it in range(0, len(tl), 1):
-
     # Output V component - we can change to other field, see vars["field_names"]
     fno  = "W"
     idir = 2                   # Plane yz normal to x
@@ -102,15 +102,16 @@ if __name__ == '__main__':
     np.savetxt(os.path.join(resdata_case_folder, 'res_wrms.dat'), res_wrms)
 
     plt, axres = plt.subplots()
-    k0s = 13.5*A*A*(0.18*6.28)**2
+    k0s = 13.5*A*A*Lt*Lt
+    print(k0s)
     u0s = np.sqrt((k0s*2)/3)
-    k0s = 1.0
-    u0s = 1.0
-    axres.plot(np.asarray(res_t) / tau, np.asarray(res_k)/k0s, "b-", label="k")
+    axres.plot(np.asarray(res_t) / tau, np.asarray(res_k), "b-", label="k")
     axres.plot(np.asarray(res_t) / tau, np.asarray(res_urms)/u0s, label='urms')
     axres.plot(np.asarray(res_t) / tau, np.asarray(res_vrms)/u0s, label='vrms')
     axres.plot(np.asarray(res_t) / tau, np.asarray(res_wrms)/u0s, label='wrms') 
-    axres.plot([0, res_t[-1]/tau], [8.4, 8.4], 'b--') 
+    axres.plot(np.asarray(res_t) / tau, np.ones_like(res_t), label='1') 
+
+    axres.plot([0, res_t[-1]/tau], [k0s, k0s], 'b--') 
     axres.legend()
     axres.set_xlabel(r"$t/\tau$", fontsize = 22)
     axres.set_ylabel(r"$k$", fontsize = 22)

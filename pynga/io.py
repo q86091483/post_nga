@@ -33,9 +33,9 @@ class case:
     Lz                  = 0.
     icyl                = 0
     is_per              = np.zeros((3)) 
-    npx                 = 4
-    npy                 = 1
-    npz                 = 1
+    npx                 = 2
+    npy                 = 4
+    npz                 = 5
     nxo         = nyo         = nzo         = None
     nxo_        = nyo_        = nzo_        = None
     # Fortran index starting from 1
@@ -328,7 +328,7 @@ def get_keys_dat(s):
     return float(ss)
 
 def data_names(cpath, add_data_init=None):
-    files = glob.glob(cpath + '/ufs:data_*E*')
+    files = glob.glob(cpath + '/data_*E*')
     fn = sorted(files, key=get_keys_dat)
     if add_data_init != None:
         fn.insert(0, cpath+"/"+add_data_init)

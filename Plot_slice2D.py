@@ -14,8 +14,8 @@ import pynga.io
 
 clims   = {}; cmaps = {}; 
 
-clims["U"]  = 45 + np.array([-25, 25])
-cmaps["U"]  = cm.viridis
+clims["U"]  = 0 + np.array([-10, 10])
+cmaps["U"]  = cm.seismic
 
 clims["V"]  = 0 + np.array([-20, 20]); 
 cmaps["V"]  = cm.seismic
@@ -23,13 +23,13 @@ cmaps["V"]  = cm.seismic
 clims["W"]  = 0 + np.array([-20, 20]); 
 cmaps["W"]  = cm.seismic
 
-clims["T"]  = 1290 + np.array([-400, 400]); 
-cmaps["T"]  = cm.hot
+clims["T"]  = 355 + np.array([-20, 20]); 
+cmaps["T"]  = cm.seismic
 
-clims["RHO"]= 0.317 + np.array([-0.05, 0.05])
-cmaps["RHO"]  = cm.viridis
+clims["RHO"]= 1 + np.array([-0.05, 0.05])
+cmaps["RHO"]  = cm.seismic
 
-clims["P"]  = 101325 + np.array([-500, 500])
+clims["P"]  = 101325 + np.array([-5000, 5000])
 cmaps["P"]  = cm.seismic
 
 clims["O2"] = 0.232 + np.array([-0.2, 0.2])
@@ -44,11 +44,16 @@ if __name__ == '__main__':
   #parser.add_argument("-case_path",  "--case_path",  type=str, required=True)
 
   # Inputs
-  case_folder   = "/scratch/zisen347/scoping_runs/NGA/"
-  case_name     = "104_PlanarFlame_4"
-  fields        = ["U", "V", "RHO", "T", "P", "OH", "H2O"]
-  idirs         = [2, ]
-  isls          = [40, ]
+  case_folder   = "/scratch/b/bsavard/zisen347/cases/"
+  case_name     = "BoxHIT_ForcingUs_1"
+  fields        = ["U", "V", "W", "P", "RHO", "T"]
+  idirs         = [2, 2, 2, 2, 2, 2] + [2, 2, 2, 2, 2, 2]
+  isls          = [1, 1, 1, 1, 1, 1] + [2, 2, 2, 2, 2, 2]
+
+  fields = ["P"] * 6 + ["V"] * 6
+  idirs = [1, 1, 2, 2, 3, 3] * 2
+  isls = [1, 96, 1, 96, 1, 96] * 2
+
 
   # Initialize MPI
   comm = MPI.COMM_WORLD
@@ -59,12 +64,13 @@ if __name__ == '__main__':
   # Initialize NGA case
   case_path     = os.path.join(case_folder, case_name)
   hit           = pynga.io.case(comm=comm, case_path=case_path, 
-                                input="input", config="ufs:config.hit", data_init="ufs:data.init.hit", nover=3)
+                                input="input", config="0config", data_init="0data", nover=0)
   slx, sly, slz = hit.get_slice_inner()
   fl            = pynga.io.data_names(hit.case_path, 
-                                      add_data_init="ufs:data.init.hit")         # data names
+                                      add_data_init="0data")         # data names
   tl            = pynga.io.timelist(hit.case_path, 
-                                    add_data_init="ufs:data.init.hit")           # list of time
+                                    add_data_init="0data")           # list of time
+  print("Plot processing: ", fl)
   # Initialize output folder
   resfigs_folder = "0ResFigs"; resfigs_case_folder = os.path.join(resfigs_folder, case_name)
   resdata_folder = "0ResData"; resdata_case_folder = os.path.join(resdata_folder, case_name)
@@ -81,7 +87,7 @@ if __name__ == '__main__':
   comm.Barrier()
 
   vmin = -4.0; vmax = 4.0       # Range of colormap
-  A = 0.7
+  A = 7000
   tau = 1 / (2*A)
 
   lg = [{}, {}, {}] # lg[idir]["size","ylabel","extent"]
@@ -96,7 +102,7 @@ if __name__ == '__main__':
   lg[2]["extent"] = np.array([hit.x[0], hit.x[-1], hit.y[0], hit.y[-1]])
 
   # For each time
-  rs = range(0, len(tl), 2)
+  rs = range(0, len(tl), 1)
   for it in rs:
     # For each field
     for fno in fields:
